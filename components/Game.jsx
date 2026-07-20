@@ -11,6 +11,8 @@ const PLAYER_H = 48;
 const VIEW_W = 900;
 const VIEW_H = 500;
 
+// Rutas de sprites: el usuario puede reemplazar estos archivos en /public/sprites/
+// con sus propias imágenes (mismo nombre, o cambia las rutas de abajo).
 const SPRITE_PATHS = {
   player: "/sprites/pinkiepie.png",
   enemy: "/sprites/enemy.svg",
@@ -37,16 +39,12 @@ function rectsOverlap(a, b) {
 
 export default function Game() {
   const canvasRef = useRef(null);
-  const containerRef = useRef(null);
   const keysRef = useRef({});
-  const touchRef = useRef({ left: false, right: false, jump: false });
   const [levelIndex, setLevelIndex] = useState(0);
   const [score, setScore] = useState(0);
   const [lives, setLives] = useState(3);
-  const [status, setStatus] = useState("ready");
-  const [spriteVersion] = useState(0);
-  const [scale, setScale] = useState(1);
-  const [isTouch, setIsTouch] = useState(false);
+  const [status, setStatus] = useState("ready"); // ready | playing | won | dead | gameover | levelComplete
+  const [spriteVersion, setSpriteVersion] = useState(0); // fuerza recarga si el usuario sube un sprite nuevo
 
   const gameStateRef = useRef(null);
   const imagesRef = useRef({});
@@ -54,29 +52,7 @@ export default function Game() {
 
   const level = LEVELS[levelIndex];
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      setIsTouch("ontouchstart" in window || navigator.maxTouchPoints > 0);
-    }
-  }, []);
-
-  useEffect(() => {
-    function handleResize() {
-      const container = containerRef.current;
-      if (!container) return;
-      const maxW = Math.min(window.innerWidth - 24, VIEW_W);
-      const s = maxW / VIEW_W;
-      setScale(s);
-    }
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    window.addEventListener("orientationchange", handleResize);
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      window.removeEventListener("orientationchange", handleResize);
-    };
-  }, []);
-
+  // Carga sprites (reintenta si el usuario reemplaza el archivo)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -124,20 +100,7 @@ export default function Game() {
     setStatus("ready");
   }, [levelIndex, resetLevel]);
 
-  function advanceOnAction() {
-    if (status === "ready") setStatus("playing");
-    if (status === "dead" || status === "gameover") {
-      setLives(3);
-      setScore(0);
-      resetLevel();
-      setStatus("playing");
-    }
-    if (status === "levelComplete") {
-      const next = (levelIndex + 1) % LEVELS.length;
-      setLevelIndex(next);
-    }
-  }
-
+  // Controles teclado
   useEffect(() => {
     const down = (e) => {
       keysRef.current[e.code] = true;
@@ -145,7 +108,17 @@ export default function Game() {
         e.preventDefault();
       }
       if (e.code === "Space" || e.code === "Enter") {
-        advanceOnAction();
+        if (status === "ready") setStatus("playing");
+        if (status === "dead" || status === "gameover") {
+          setLives(3);
+          setScore(0);
+          resetLevel();
+          setStatus("playing");
+        }
+        if (status === "levelComplete") {
+          const next = (levelIndex + 1) % LEVELS.length;
+          setLevelIndex(next);
+        }
       }
     };
     const up = (e) => {
@@ -157,9 +130,9 @@ export default function Game() {
       window.removeEventListener("keydown", down);
       window.removeEventListener("keyup", up);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, levelIndex, resetLevel]);
 
+  // Loop principal
   useEffect(() => {
     let lastTime = performance.now();
 
@@ -185,26 +158,30 @@ export default function Game() {
     const lvl = LEVELS[levelIndex];
     const p = gs.player;
     const keys = keysRef.current;
-    const touch = touchRef.current;
 
+    // Horizontal
     let move = 0;
-    if (keys["ArrowLeft"] || keys["KeyA"] || touch.left) move -= 1;
-    if (keys["ArrowRight"] || keys["KeyD"] || touch.right) move += 1;
+    if (keys["ArrowLeft"] || keys["KeyA"]) move -= 1;
+    if (keys["ArrowRight"] || keys["KeyD"]) move += 1;
     p.vx = move * MOVE_SPEED;
     if (move !== 0) p.facing = move;
 
-    if ((keys["Space"] || keys["ArrowUp"] || keys["KeyW"] || touch.jump) && p.onGround) {
+    // Salto
+    if ((keys["Space"] || keys["ArrowUp"] || keys["KeyW"]) && p.onGround) {
       p.vy = -JUMP_VELOCITY;
       p.onGround = false;
     }
 
+    // Física
     p.vy += GRAVITY * dt;
     p.x += p.vx * dt;
     p.y += p.vy * dt;
 
+    // Límites del mundo
     if (p.x < 0) p.x = 0;
     if (p.x + p.w > lvl.width) p.x = lvl.width - p.w;
 
+    // Colisión con plataformas
     p.onGround = false;
     for (const plat of lvl.platforms) {
       const pRect = { x: p.x, y: p.y, w: p.w, h: p.h };
@@ -226,13 +203,16 @@ export default function Game() {
       }
     }
 
+    // Caída al vacío
     if (p.y > lvl.height + 100) {
       loseLife();
       return;
     }
 
+    // Invulnerabilidad tras golpe
     if (p.invuln > 0) p.invuln -= dt;
 
+    // Enemigos
     for (const e of gs.enemies) {
       e.x += e.dir * e.speed * dt;
       if (e.x < e.range[0]) {
@@ -245,8 +225,9 @@ export default function Game() {
       const eRect = { x: e.x, y: e.y, w: 32, h: 32 };
       const pRect = { x: p.x, y: p.y, w: p.w, h: p.h };
       if (rectsOverlap(pRect, eRect) && p.invuln <= 0) {
+        // Si cae desde arriba, elimina al enemigo (estilo Mario)
         if (p.vy > 0 && p.y + p.h - eRect.h / 2 < eRect.y + 10) {
-          e.range = [e.x, e.x];
+          e.range = [e.x, e.x]; // lo "neutraliza" quitándole rango
           e.dead = true;
           p.vy = -JUMP_VELOCITY * 0.6;
           setScore((s) => s + 50);
@@ -258,6 +239,7 @@ export default function Game() {
     }
     gs.enemies = gs.enemies.filter((e) => !e.dead);
 
+    // Monedas
     for (const c of gs.coins) {
       if (c.taken) continue;
       const cRect = { x: c.x, y: c.y, w: 28, h: 28 };
@@ -268,12 +250,14 @@ export default function Game() {
       }
     }
 
+    // Meta
     const goalRect = { x: lvl.goal.x, y: lvl.goal.y, w: 40, h: 70 };
     const pRect = { x: p.x, y: p.y, w: p.w, h: p.h };
     if (rectsOverlap(pRect, goalRect)) {
       setStatus("levelComplete");
     }
 
+    // Cámara
     gs.camX = Math.max(0, Math.min(p.x - VIEW_W / 2, lvl.width - VIEW_W));
   }
 
@@ -299,6 +283,7 @@ export default function Game() {
 
     ctx.clearRect(0, 0, VIEW_W, VIEW_H);
 
+    // Cielo con degradado
     const sky = ctx.createLinearGradient(0, 0, 0, VIEW_H);
     sky.addColorStop(0, "#bfe9ff");
     sky.addColorStop(1, "#eaf9ff");
@@ -308,12 +293,14 @@ export default function Game() {
     if (!gs) return;
     const camX = gs.camX;
 
+    // Nubes simples decorativas
     ctx.fillStyle = "#ffffff";
     for (let i = 0; i < 6; i++) {
       const cx = ((i * 400 - camX * 0.3) % (lvl.width + 400) + lvl.width + 400) % (lvl.width + 400);
       drawCloud(ctx, cx - camX * 0, 60 + (i % 3) * 40);
     }
 
+    // Plataformas
     ctx.fillStyle = "#f8bbd0";
     ctx.strokeStyle = "#ec407a";
     ctx.lineWidth = 3;
@@ -324,6 +311,7 @@ export default function Game() {
       ctx.strokeRect(x, plat.y, plat.w, plat.h);
     }
 
+    // Monedas
     for (const c of gs.coins) {
       if (c.taken) continue;
       const x = c.x - camX;
@@ -338,6 +326,7 @@ export default function Game() {
       }
     }
 
+    // Enemigos
     for (const e of gs.enemies) {
       const x = e.x - camX;
       if (x + 32 < 0 || x > VIEW_W) continue;
@@ -349,6 +338,7 @@ export default function Game() {
       }
     }
 
+    // Meta (bandera)
     {
       const gx = lvl.goal.x - camX;
       ctx.fillStyle = "#66bb6a";
@@ -361,6 +351,7 @@ export default function Game() {
       ctx.fill();
     }
 
+    // Jugador
     const p = gs.player;
     const px = p.x - camX;
     ctx.save();
@@ -382,6 +373,8 @@ export default function Game() {
       ctx.fillRect(px, p.y, p.w, p.h);
     }
     ctx.restore();
+
+    // Suelo de "fin del mundo" visual (piso decorativo bajo plataformas, opcional)
   }
 
   function drawCloud(ctx, x, y) {
@@ -392,113 +385,63 @@ export default function Game() {
     ctx.fill();
   }
 
-  function setTouchFlag(key, value) {
-    touchRef.current[key] = value;
-  }
-
-  function handleCanvasTap() {
-    if (status !== "playing") advanceOnAction();
-  }
-
   return (
-    <div className="flex flex-col items-center gap-4 w-full px-2">
-      <div className="flex items-center gap-4 sm:gap-6 text-sm sm:text-lg font-bold text-pink-700 flex-wrap justify-center">
-        <span>⭐ {score}</span>
-        <span>❤️ {lives}</span>
-        <span>🎪 {level.name}</span>
+    <div className="flex flex-col items-center gap-4">
+      <div className="flex items-center gap-6 text-lg font-bold text-pink-700">
+        <span>⭐ Puntos: {score}</span>
+        <span>❤️ Vidas: {lives}</span>
+        <span>🎪 Nivel: {level.name}</span>
       </div>
 
-      <div
-        ref={containerRef}
-        className="relative border-4 border-pink-400 rounded-xl overflow-hidden shadow-lg"
-        style={{ width: VIEW_W * scale, height: VIEW_H * scale }}
-        onClick={handleCanvasTap}
-      >
+      <div className="relative border-4 border-pink-400 rounded-xl overflow-hidden shadow-lg">
         <canvas
           ref={canvasRef}
           width={VIEW_W}
           height={VIEW_H}
           className="block bg-sky-100"
-          style={{
-            width: VIEW_W * scale,
-            height: VIEW_H * scale,
-          }}
         />
 
         {status !== "playing" && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 text-white text-center p-4 sm:p-6">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 text-white text-center p-6">
             {status === "ready" && (
               <>
-                <h2 className="text-xl sm:text-2xl font-bold mb-2">{level.name}</h2>
-                <p className="mb-4 text-sm sm:text-base">
-                  {isTouch
-                    ? "Usa los botones de abajo para moverte y saltar."
-                    : "Flechas / A-D para moverte, Espacio o Arriba para saltar."}
-                </p>
-                <p className="text-pink-200 text-sm sm:text-base">
-                  {isTouch ? "Toca la pantalla para empezar" : "Presiona Espacio para empezar"}
-                </p>
+                <h2 className="text-2xl font-bold mb-2">{level.name}</h2>
+                <p className="mb-4">Flechas / A-D para moverte, Espacio o Arriba para saltar.</p>
+                <p className="text-pink-200">Presiona Espacio para empezar</p>
               </>
             )}
             {status === "dead" && (
               <>
-                <h2 className="text-xl sm:text-2xl font-bold mb-2">¡Perdiste una vida!</h2>
-                <p className="text-sm sm:text-base">
-                  {isTouch ? "Toca la pantalla para continuar" : "Presiona Espacio para continuar"}
-                </p>
+                <h2 className="text-2xl font-bold mb-2">¡Perdiste una vida!</h2>
+                <p>Presiona Espacio para continuar</p>
               </>
             )}
             {status === "gameover" && (
               <>
-                <h2 className="text-xl sm:text-2xl font-bold mb-2">Game Over</h2>
-                <p className="mb-2 text-sm sm:text-base">Puntaje final: {score}</p>
-                <p className="text-sm sm:text-base">
-                  {isTouch ? "Toca la pantalla para reiniciar" : "Presiona Espacio para reiniciar"}
-                </p>
+                <h2 className="text-2xl font-bold mb-2">Game Over</h2>
+                <p className="mb-2">Puntaje final: {score}</p>
+                <p>Presiona Espacio para reiniciar</p>
               </>
             )}
             {status === "levelComplete" && (
               <>
-                <h2 className="text-xl sm:text-2xl font-bold mb-2">¡Nivel completado! 🎉</h2>
-                <p className="mb-2 text-sm sm:text-base">Puntaje: {score}</p>
-                <p className="text-sm sm:text-base">
-                  {isTouch ? "Toca la pantalla para el siguiente nivel" : "Presiona Espacio para el siguiente nivel"}
-                </p>
+                <h2 className="text-2xl font-bold mb-2">¡Nivel completado! 🎉</h2>
+                <p className="mb-2">Puntaje: {score}</p>
+                <p>Presiona Espacio para el siguiente nivel</p>
               </>
             )}
           </div>
         )}
       </div>
 
-      {isTouch && (
-        <div className="flex items-center justify-between w-full max-w-[900px] px-2 select-none">
-          <div className="flex gap-3">
-            <TouchButton
-              label="◀"
-              onDown={() => setTouchFlag("left", true)}
-              onUp={() => setTouchFlag("left", false)}
-            />
-            <TouchButton
-              label="▶"
-              onDown={() => setTouchFlag("right", true)}
-              onUp={() => setTouchFlag("right", false)}
-            />
-          </div>
-          <TouchButton
-            label="⤴"
-            big
-            onDown={() => setTouchFlag("jump", true)}
-            onUp={() => setTouchFlag("jump", false)}
-          />
-        </div>
-      )}
+      <SpriteUploader onUploaded={() => setSpriteVersion((v) => v + 1)} />
 
-      <div className="flex gap-2 flex-wrap justify-center">
+      <div className="flex gap-2">
         {LEVELS.map((l, i) => (
           <button
             key={l.name}
             onClick={() => setLevelIndex(i)}
-            className={`px-3 py-1 rounded-full text-xs sm:text-sm font-semibold border ${
+            className={`px-3 py-1 rounded-full text-sm font-semibold border ${
               i === levelIndex
                 ? "bg-pink-500 text-white border-pink-500"
                 : "bg-white text-pink-600 border-pink-300"
@@ -512,24 +455,25 @@ export default function Game() {
   );
 }
 
-function TouchButton({ label, onDown, onUp, big }) {
-  const size = big ? "w-20 h-20 text-3xl" : "w-16 h-16 text-2xl";
+function SpriteUploader({ onUploaded }) {
+  const inputRef = useRef(null);
+  const [msg, setMsg] = useState("");
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setMsg("Nota: en desarrollo local, reemplaza manualmente /public/sprites/player.png (o .svg) y renombra en components/Game.jsx si usas otro nombre. Esta vista previa no persiste sin backend.");
+  }
+
   return (
-    <button
-      className={`${size} rounded-full bg-pink-500 text-white font-bold shadow-md active:bg-pink-600 flex items-center justify-center touch-none`}
-      onTouchStart={(e) => {
-        e.preventDefault();
-        onDown();
-      }}
-      onTouchEnd={(e) => {
-        e.preventDefault();
-        onUp();
-      }}
-      onMouseDown={onDown}
-      onMouseUp={onUp}
-      onMouseLeave={onUp}
-    >
-      {label}
-    </button>
+    <div className="text-xs text-gray-500 text-center max-w-md">
+      <p>
+      
+        <code className="bg-gray-100 px-1 rounded"></code>{" "}
+        
+        <code className="bg-gray-100 px-1 rounded"></code> {" "}
+        <code className="bg-gray-100 px-1 rounded"></code>.
+      </p>
+    </div>
   );
 }
