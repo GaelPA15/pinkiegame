@@ -15,6 +15,8 @@ const VIEW_H = 500;
 // con sus propias imágenes (mismo nombre, o cambia las rutas de abajo).
 const SPRITE_PATHS = {
   player: "/sprites/pinkiepie.png",
+  playerSad: "/sprites/pinkiepie-sad.png",
+  playerHappy: "/sprites/pinkiepie-happy.png",
   enemy: "/sprites/enemy.svg",
   coin: "/sprites/coin.svg",
 };
@@ -358,14 +360,23 @@ export default function Game() {
     if (p.invuln > 0 && Math.floor(p.invuln * 10) % 2 === 0) {
       ctx.globalAlpha = 0.4;
     }
-    if (imgs.player) {
+
+    // Elige el sprite según el estado del personaje
+    let currentSprite = imgs.player;
+    if ((status === "dead" || status === "gameover") && imgs.playerSad) {
+      currentSprite = imgs.playerSad;
+    } else if (status === "levelComplete" && imgs.playerHappy) {
+      currentSprite = imgs.playerHappy;
+    }
+
+    if (currentSprite) {
       ctx.save();
       if (p.facing < 0) {
         ctx.translate(px + p.w, p.y);
         ctx.scale(-1, 1);
-        ctx.drawImage(imgs.player, 0, 0, p.w, p.h);
+        ctx.drawImage(currentSprite, 0, 0, p.w, p.h);
       } else {
-        ctx.drawImage(imgs.player, px, p.y, p.w, p.h);
+        ctx.drawImage(currentSprite, px, p.y, p.w, p.h);
       }
       ctx.restore();
     } else {
@@ -434,8 +445,6 @@ export default function Game() {
         )}
       </div>
 
-      <SpriteUploader onUploaded={() => setSpriteVersion((v) => v + 1)} />
-
       <div className="flex gap-2">
         {LEVELS.map((l, i) => (
           <button
@@ -451,29 +460,6 @@ export default function Game() {
           </button>
         ))}
       </div>
-    </div>
-  );
-}
-
-function SpriteUploader({ onUploaded }) {
-  const inputRef = useRef(null);
-  const [msg, setMsg] = useState("");
-
-  async function handleFile(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setMsg("Nota: en desarrollo local, reemplaza manualmente /public/sprites/player.png (o .svg) y renombra en components/Game.jsx si usas otro nombre. Esta vista previa no persiste sin backend.");
-  }
-
-  return (
-    <div className="text-xs text-gray-500 text-center max-w-md">
-      <p>
-      
-        <code className="bg-gray-100 px-1 rounded"></code>{" "}
-        
-        <code className="bg-gray-100 px-1 rounded"></code> {" "}
-        <code className="bg-gray-100 px-1 rounded"></code>.
-      </p>
     </div>
   );
 }
